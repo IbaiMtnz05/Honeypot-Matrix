@@ -629,6 +629,81 @@
             color: #ffa500;
         }
 
+        /* Malware Table - similar styling to attacks table */
+        .malware-table {
+            background: rgba(0, 20, 40, 0.8);
+            border: 1px solid rgba(255, 0, 65, 0.3);
+            border-radius: 15px;
+            padding: 36px;
+            backdrop-filter: blur(10px);
+            margin-bottom: 60px;
+            overflow: hidden;
+        }
+
+        .malware-table table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Courier New', monospace;
+        }
+
+        .malware-table th, .malware-table td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 0, 65, 0.2);
+        }
+
+        .malware-table th {
+            background: rgba(255, 0, 65, 0.1);
+            color: #ff0041;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .malware-table tr:hover {
+            background: rgba(255, 0, 65, 0.05);
+        }
+
+        .malware-table td {
+            color: #ccc;
+        }
+
+        .hash-cell {
+            color: #ff6b6b;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .filetype-cell {
+            color: #ffa500;
+            font-weight: bold;
+        }
+
+        .size-cell {
+            color: #00b8ff;
+        }
+
+        .threat-cell {
+            font-weight: bold;
+        }
+
+        .threat-high {
+            color: #ff4757;
+        }
+
+        .threat-medium {
+            color: #ffa502;
+        }
+
+        .threat-low {
+            color: #2ed573;
+        }
+
+        /* Malware Cards for Mobile */
+        .malware-cards {
+            display: none;
+        }
+
         /* Scroll Progress Bar */
         .scroll-progress {
             position: fixed;

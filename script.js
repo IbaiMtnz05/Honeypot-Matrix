@@ -76,20 +76,19 @@
         // Dashboard Class
         class HoneypotMatrix {
             constructor() {
-                console.log('HoneypotMatrix constructor starting...');
                 this.map = null;
                 this.charts = {};
                 this.data = {
                     summary: {},
                     attacks: [],
-                    hourlyStats: {}
+                    hourlyStats: {},
+                    binaryStats: {}
                 };
                 this.terminalLines = [];
                 this.lastActivityTime = null;
                 this.lastDataUpdateTime = null; // Track when we last received data
                 this.statusCheckInterval = null;
                 this.currentStatValues = {}; // Track current animated values to prevent unnecessary animations
-                console.log('HoneypotMatrix data initialized, calling init()...');
                 this.init();
             }
 
@@ -132,39 +131,28 @@
             }
 
             async init() {
-                console.log('Init method starting...');
                 try {
-                    console.log('Setting timezone indicator...');
                     // Set timezone indicator
                     this.updateTimezoneIndicator();
                     
-                    console.log('Starting loading delay...');
                     // Add random loading delay (1-2 seconds) for better UX
                     const loadingDelay = 1000 + Math.random() * 1000; // 1-2 seconds
                     await new Promise(resolve => setTimeout(resolve, loadingDelay));
                     
-                    console.log('Loading data...');
                     await this.loadData();
-                    console.log('Initializing map...');
                     this.initMap();
-                    console.log('Creating charts...');
                     this.createCharts();
-                    console.log('Populating table...');
                     this.populateTable();
-                    console.log('Updating stats...');
+                    this.populateMalwareTable();
                     this.updateStats();
-                    console.log('Starting terminal feed...');
                     this.startTerminalFeed();
                     
-                    console.log('Setting up auto-refresh...');
                     // Auto-refresh every 5 minutes
                     setInterval(() => this.loadData(), 5 * 60 * 1000);
-                    console.log('Initialization completed successfully!');
                 } catch (error) {
                     console.error('Dashboard initialization failed:', error);
                     this.showError('Failed to initialize dashboard: ' + error.message);
                 } finally {
-                    console.log('Hiding loading screen...');
                     // Always hide loading screen
                     this.hideLoading();
                 }
@@ -172,13 +160,12 @@
 
             async loadData() {
                 try {
-                    console.log('Loading honeypot data...');
-                    
                     // Try to fetch real data from server
-                    const [summaryRes, attacksRes, hourlyRes] = await Promise.all([
+                    const [summaryRes, attacksRes, hourlyRes, binaryRes] = await Promise.all([
                         fetch('./data/summary.json').catch(() => null),
                         fetch('./data/attacks.json').catch(() => null),
-                        fetch('./data/hourly_stats.json').catch(() => null)
+                        fetch('./data/hourly_stats.json').catch(() => null),
+                        fetch('./data/binary_stats.json').catch(() => null)
                     ]);
 
                     let hasRealData = false;
@@ -203,46 +190,26 @@
                         hasRealData = true;
                     }
 
-                    if (!hasRealData) {
-                        console.log('No real data found, using demo data...');
-                        // Use demo data instead of throwing an error
-                        this.data = {
-                            summary: {
-                                total_attacks: 69,
-                                unique_ips: 18,
-                                services_targeted: { SSH: 25, HTTP: 20, FTP: 15, TELNET: 9 },
-                                countries: { Russia: 25, China: 20, USA: 15, Germany: 9 },
-                                top_attackers: { "192.168.1.100": 15, "10.0.0.50": 12, "172.16.0.25": 10 }
-                            },
-                            attacks: [
-                                {
-                                    timestamp: new Date().toISOString(),
-                                    src_ip: "192.168.1.100",
-                                    dst_port: 22,
-                                    service: "ssh",
-                                    country: "Russia"
-                                },
-                                {
-                                    timestamp: new Date(Date.now() - 60000).toISOString(),
-                                    src_ip: "10.0.0.50", 
-                                    dst_port: 80,
-                                    service: "http",
-                                    country: "China"
-                                }
-                            ],
-                            hourlyStats: {}
+                    if (binaryRes && binaryRes.ok) {
+                        this.data.binaryStats = await binaryRes.json();
+                        hasRealData = true;
+                    } else {
+                        // Default binary stats if not available
+                        this.data.binaryStats = { 
+                            total_binaries: 0, 
+                            file_types: {}, 
+                            size_distribution: { small: 0, medium: 0, large: 0 }, 
+                            recent_binaries: [] 
                         };
-                        // Set demo data update time
-                        this.lastDataUpdateTime = new Date();
+                    }
+
+                    if (!hasRealData) {
+                        console.error('No real honeypot data available');
+                        throw new Error('No honeypot data files found. Please ensure your Raspberry Pi is uploading data to the ./data/ directory');
                     }
 
                     // Color countries that have attacked based on summary data
                     setTimeout(() => this.colorAttackingCountries(), 1000);
-
-                    console.log('Data loaded successfully:', {
-                        attacks: this.data.attacks.length,
-                        summary: Object.keys(this.data.summary).length
-                    });
 
                     // Update derived stats and charts after loading
                     try {
@@ -253,31 +220,14 @@
 
                 } catch (error) {
                     console.error('Data loading failed:', error);
-                    console.log('Using fallback demo data due to loading error...');
-                    // Use demo data as fallback
-                    this.data = {
-                        summary: {
-                            total_attacks: 42,
-                            unique_ips: 12,
-                            services_targeted: { SSH: 20, HTTP: 15, FTP: 7 },
-                            countries: { Russia: 18, China: 14, USA: 10 },
-                            top_attackers: { "192.168.1.100": 8, "10.0.0.50": 7, "172.16.0.25": 6 }
-                        },
-                        attacks: [],
-                        hourlyStats: {}
-                    };
-                    // Set fallback data update time
-                    this.lastDataUpdateTime = new Date();
+                    throw error; // Re-throw the error to be handled by the calling function
                 }
             }
 
             colorAttackingCountries() {
                 if (!this._worldSvg || !this.data.summary?.countries) {
-                    console.log('Cannot color countries - missing world SVG or country data');
                     return;
                 }
-
-                console.log('Coloring countries that have attacked:', Object.keys(this.data.summary.countries));
 
                 // Color all countries that appear in the summary data
                 Object.keys(this.data.summary.countries).forEach(countryName => {
@@ -440,9 +390,6 @@
                     allPaths.forEach(path => {
                         path.classList.add('has-attacked');
                     });
-                    console.log(`Marked ${allPaths.length} path(s) as attacked for:`, countryName);
-                } else {
-                    console.log('Country path not found for:', countryName);
                 }
             }
 
@@ -1515,6 +1462,8 @@
                 this.createServiceChart();
                 this.createTimeChart();
                 this.createAttackerChart();
+                this.createBinaryChart();
+                this.createSizeChart();
                 // Populate initial data
                 this.updateCharts();
             }
@@ -1654,6 +1603,34 @@
                     this.charts.attacker.data.labels = attackerLabels;
                     this.charts.attacker.data.datasets[0].data = attackerData;
                     this.charts.attacker.update();
+                }
+
+                // Binary file types chart
+                if (this.charts.binary && this.data.binaryStats) {
+                    const fileTypes = this.data.binaryStats.file_types || {};
+                    const typeEntries = Object.entries(fileTypes)
+                        .sort((a, b) => b[1] - a[1]); // Sort by count descending
+                    const typeLabels = typeEntries.map(e => e[0]);
+                    const typeData = typeEntries.map(e => e[1]);
+                    const colors = this.generateColors(typeLabels.length);
+                    
+                    this.charts.binary.data.labels = typeLabels;
+                    this.charts.binary.data.datasets[0].data = typeData;
+                    this.charts.binary.data.datasets[0].backgroundColor = colors;
+                    this.charts.binary.update();
+                }
+
+                // Size distribution chart
+                if (this.charts.size && this.data.binaryStats) {
+                    const sizeCategories = this.data.binaryStats.size_distribution || {};
+                    const sizeLabels = ['< 1KB', '1-10KB', '10-100KB', '100KB-1MB', '> 1MB'];
+                    const sizeData = sizeLabels.map(label => {
+                        const key = label.replace(/[<>]/g, '').replace(/\s/g, '_').toLowerCase();
+                        return sizeCategories[key] || 0;
+                    });
+                    
+                    this.charts.size.data.datasets[0].data = sizeData;
+                    this.charts.size.update();
                 }
             }
 
@@ -1908,15 +1885,106 @@
                 });
             }
 
+            createBinaryChart() {
+                const ctx = document.getElementById('binaryChart').getContext('2d');
+                this.charts.binary = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            data: [],
+                            backgroundColor: [], // Will be generated dynamically
+                            borderColor: '#000',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: window.innerWidth > 768,
+                        aspectRatio: window.innerWidth <= 768 ? 1 : 1.2, // Square on mobile, slightly rectangular on desktop
+                        plugins: {
+                            legend: {
+                                position: window.innerWidth <= 768 ? 'bottom' : 'right',
+                                labels: {
+                                    color: '#fff',
+                                    usePointStyle: true,
+                                    padding: window.innerWidth <= 768 ? 8 : 20,
+                                    boxWidth: window.innerWidth <= 768 ? 12 : 15,
+                                    font: {
+                                        size: window.innerWidth <= 768 ? 10 : 12
+                                    }
+                                },
+                                maxHeight: window.innerWidth <= 768 ? 150 : undefined,
+                                overflow: window.innerWidth <= 768 ? 'scroll' : undefined
+                            }
+                        },
+                        layout: {
+                            padding: window.innerWidth <= 768 ? 5 : 10
+                        }
+                    }
+                });
+            }
+
+            createSizeChart() {
+                const ctx = document.getElementById('sizeChart').getContext('2d');
+                this.charts.size = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['< 1KB', '1-10KB', '10-100KB', '100KB-1MB', '> 1MB'],
+                        datasets: [{
+                            label: 'File Count',
+                            data: [],
+                            backgroundColor: 'rgba(116, 185, 255, 0.6)',
+                            borderColor: '#74b9ff',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: window.innerWidth > 768,
+                        aspectRatio: window.innerWidth <= 768 ? 1.2 : 1.5, // Make it smaller/more compact
+                        indexAxis: window.innerWidth <= 768 ? 'y' : 'x', // Horizontal bars on mobile
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(116, 185, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#fff',
+                                    stepSize: 1,
+                                    font: {
+                                        size: window.innerWidth <= 768 ? 10 : 12
+                                    }
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    display: false
+                                },
+                                ticks: {
+                                    color: '#fff',
+                                    font: {
+                                        size: window.innerWidth <= 768 ? 10 : 12
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+            }
+
             populateTable() {
-                console.log('populateTable called');
                 const tbody = document.getElementById('attacks-tbody');
                 const cardsContainer = document.getElementById('attacks-cards');
-                console.log('Cards container found:', !!cardsContainer);
                 
                 // Force mobile view detection
                 const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                console.log('Is mobile device:', isMobile, 'Screen width:', window.innerWidth);
                 
                 if (isMobile) {
                     // Force mobile styles with JavaScript
@@ -1924,12 +1992,10 @@
                     const cards = document.querySelector('.attacks-cards');
                     if (table) {
                         table.style.display = 'none';
-                        console.log('Table hidden for mobile');
                     }
                     if (cards) {
                         cards.style.display = 'block';
                         cards.style.padding = '10px';
-                        console.log('Cards shown for mobile');
                     }
                 }
                 
@@ -1956,8 +2022,6 @@
                 }
 
                 const recentAttacks = this.data.attacks.slice(-20).reverse();
-                console.log('Creating cards for', recentAttacks.length, 'attacks');
-                
                 recentAttacks.forEach((attack, index) => {
                     // Populate table row (desktop)
                     const row = tbody.insertRow();
@@ -2066,7 +2130,11 @@
                     { id: 'total-attacks', value: this.data.summary.total_attacks || 0 },
                     { id: 'unique-ips', value: this.data.summary.unique_ips || 0 },
                     { id: 'services-count', value: Object.keys(this.data.summary.services_targeted || {}).length },
-                    { id: 'countries-count', value: Object.keys(this.data.summary.countries || {}).length }
+                    { id: 'countries-count', value: Object.keys(this.data.summary.countries || {}).length },
+                    { id: 'binaries-count', value: this.data.summary.total_binaries || this.data.binaryStats?.total_binaries || 0 },
+                    { id: 'file-types-count', value: this.data.summary.unique_file_types || Object.keys(this.data.binaryStats?.file_types || {}).length },
+                    { id: 'downloads-count', value: this.data.summary.malware_downloads || 0 },
+                    { id: 'total-size', value: Math.round((this.data.summary.total_malware_size || 0) / (1024 * 1024)) } // Convert to MB
                 ];
 
                 stats.forEach(stat => {
@@ -2129,6 +2197,59 @@
                         }, 300);
                     }
                 }, stepTime);
+            }
+
+            populateMalwareTable() {
+                const tbody = document.getElementById('malware-tbody');
+                if (!tbody) {
+                    return;
+                }
+
+                tbody.innerHTML = '';
+
+                // Check if we have binary stats and recent samples
+                const binaryStats = this.data.binaryStats;
+                if (!binaryStats || !binaryStats.recent_samples || binaryStats.recent_samples.length === 0) {
+                    const row = tbody.insertRow();
+                    row.innerHTML = '<td colspan="5" class="no-data" style="text-align: center; padding: 30px; color: #888;">No malware samples collected yet</td>';
+                    return;
+                }
+
+                // Display recent malware samples (limit to 10 most recent)
+                const recentSamples = binaryStats.recent_samples.slice(0, 10);
+                
+                recentSamples.forEach(sample => {
+                    const row = tbody.insertRow();
+                    
+                    // Format file size
+                    const formatFileSize = (bytes) => {
+                        if (bytes < 1024) return `${bytes} B`;
+                        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+                        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+                        return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+                    };
+
+                    // Determine threat level based on file type
+                    const getThreatLevel = (fileType) => {
+                        const highThreat = ['executable', 'script', 'archive'];
+                        const mediumThreat = ['document', 'image'];
+                        
+                        if (highThreat.some(t => fileType.toLowerCase().includes(t))) return 'HIGH';
+                        if (mediumThreat.some(t => fileType.toLowerCase().includes(t))) return 'MEDIUM';
+                        return 'LOW';
+                    };
+
+                    const threatLevel = getThreatLevel(sample.file_type || 'unknown');
+                    const threatClass = threatLevel.toLowerCase();
+
+                    row.innerHTML = `
+                        <td class="filename">${sample.filename || 'unknown'}</td>
+                        <td>${sample.file_type || 'Unknown'}</td>
+                        <td>${formatFileSize(sample.size || 0)}</td>
+                        <td><span class="threat-level ${threatClass}">${threatLevel}</span></td>
+                        <td class="timestamp">${sample.timestamp ? new Date(sample.timestamp).toLocaleString() : 'Unknown'}</td>
+                    `;
+                });
             }
 
             startTerminalFeed() {
@@ -2210,9 +2331,10 @@
                 const poll = async () => {
                     try {
                         // Fetch both attacks and summary data to ensure real-time updates
-                        const [attacksRes, summaryRes] = await Promise.all([
+                        const [attacksRes, summaryRes, binaryRes] = await Promise.all([
                             fetch('./data/attacks.json?t=' + Date.now()),
-                            fetch('./data/summary.json?t=' + Date.now()).catch(() => null)
+                            fetch('./data/summary.json?t=' + Date.now()).catch(() => null),
+                            fetch('./data/binary_stats.json?t=' + Date.now()).catch(() => null)
                         ]);
                         
                         if (!attacksRes.ok) return;
@@ -2222,6 +2344,12 @@
                         if (summaryRes && summaryRes.ok) {
                             const summaryData = await summaryRes.json();
                             this.data.summary = summaryData;
+                        }
+
+                        // Update binary stats if available
+                        if (binaryRes && binaryRes.ok) {
+                            const binaryData = await binaryRes.json();
+                            this.data.binaryStats = binaryData;
                         }
                         
                         // Check if we have new data
@@ -2248,6 +2376,7 @@
                         // Only update table if there are new attacks or if it's the first load
                         if (newAttacks.length > 0 || !this.previousAttacks) {
                             this.populateTable();
+                            this.populateMalwareTable();
                         }
                         
                         // Process new attacks: immediate terminal feed + delayed map visualization
@@ -2337,96 +2466,55 @@
                 });
             }
             
-            // Initialize everything when DOM is ready
-            document.addEventListener('DOMContentLoaded', function() {
-                // Smooth scrolling for nav links
-                document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-                    anchor.addEventListener('click', function (e) {
-                        e.preventDefault();
-                        const target = document.querySelector(this.getAttribute('href'));
-                        if (!target) return; // Target section not found
-
-                        const headerHeight = document.querySelector('.header').offsetHeight;
-                        const targetPosition = target.getBoundingClientRect().top + window.scrollY - headerHeight - 10;
-
-                        window.scrollTo({
-                            top: targetPosition,
-                            behavior: 'smooth'
-                        });
-                    });
-                });
-                
-                // Initialize mobile menu toggle
-                const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
-                const navLinks = document.querySelector('.nav-links');
-                
-                if (mobileMenuBtn && navLinks) {
-                    mobileMenuBtn.addEventListener('click', function() {
-                        this.classList.toggle('active');
-                        navLinks.classList.toggle('active');
-                    });
-                    
-                    // Close mobile menu when clicking on a link
-                    navLinks.querySelectorAll('a').forEach(link => {
-                        link.addEventListener('click', function() {
-                            mobileMenuBtn.classList.remove('active');
-                            navLinks.classList.remove('active');
-                        });
-                    });
-                }
-                
-                // Initialize honeypot dashboard with debugging
-                console.log('DOM loaded, initializing honeypot dashboard...');
-                try {
-                    window.honeypot = new HoneypotMatrix();
-                    console.log('HoneypotMatrix created successfully');
-                } catch (error) {
-                    console.error('Failed to create HoneypotMatrix:', error);
-                    // Force hide loading screen on error
-                    setTimeout(() => {
-                        const loading = document.getElementById('loading');
-                        const content = document.getElementById('dashboard-content');
-                        if (loading) loading.style.display = 'none';
-                        if (content) content.style.display = 'block';
-                    }, 1000);
-                }
-            });
-            
-            // Fallback initialization after 2 seconds if DOMContentLoaded doesn't work
-            setTimeout(() => {
-                if (!window.honeypot) {
-                    console.log('Fallback initialization triggered...');
-                    try {
-                        window.honeypot = new HoneypotMatrix();
-                    } catch (error) {
-                        console.error('Fallback initialization failed:', error);
-                        // Force show dashboard even if broken
-                        const loading = document.getElementById('loading');
-                        const content = document.getElementById('dashboard-content');
-                        if (loading) loading.style.display = 'none';
-                        if (content) content.style.display = 'block';
-                    }
-                }
-            }, 2000);
-            
-            // Keep the old initialization as fallback
-            // Smooth scrolling for nav links (fallback)
+            // Smooth scrolling for nav links
             document.querySelectorAll('a[href^="#"]').forEach(anchor => {
                 anchor.addEventListener('click', function (e) {
                     e.preventDefault();
                     const target = document.querySelector(this.getAttribute('href'));
-                    if (!target) return; // target missing (map removed)
-                    
+                    if (!target) return; // Target section not found
+
                     const headerHeight = document.querySelector('.header').offsetHeight;
-                    const targetPosition = target.offsetTop - headerHeight - 20;
-                    
+                    const targetPosition = target.getBoundingClientRect().top + window.scrollY - headerHeight - 10;
+
                     window.scrollTo({
                         top: targetPosition,
                         behavior: 'smooth'
                     });
                 });
             });
-
+                
+            // Initialize mobile menu toggle (alternative method)
+            const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+            
+            if (mobileMenuBtn && navLinks) {
+                mobileMenuBtn.addEventListener('click', function() {
+                    this.classList.toggle('active');
+                    navLinks.classList.toggle('active');
+                });
+                
+                // Close mobile menu when clicking on a link
+                navLinks.querySelectorAll('a').forEach(link => {
+                    link.addEventListener('click', function() {
+                        mobileMenuBtn.classList.remove('active');
+                        navLinks.classList.remove('active');
+                    });
+                });
+            }
+                
+            // Initialize honeypot dashboard
+            try {
+                window.honeypot = new HoneypotMatrix();
+            } catch (error) {
+                console.error('Failed to create HoneypotMatrix:', error);
+                // Force hide loading screen on error
+                setTimeout(() => {
+                    const loading = document.getElementById('loading');
+                    const content = document.getElementById('dashboard-content');
+                    if (loading) loading.style.display = 'none';
+                    if (content) content.style.display = 'block';
+                }, 1000);
+            }
+            
             // Reveal on scroll using IntersectionObserver
             const revealObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
@@ -2468,21 +2556,49 @@
             document.querySelectorAll('.charts-grid .chart-container').forEach((c, i) => {
                 c.setAttribute('data-reveal', '');
             });
+        
+            // Fallback initialization within DOMContentLoaded
+            setTimeout(() => {
+                if (!window.honeypot) {
+                    try {
+                        window.honeypot = new HoneypotMatrix();
+                    } catch (error) {
+                        console.error('Fallback initialization failed:', error);
+                    }
+                }
+            }, 2000);
+
+            // Smooth scrolling for navigation links
+            document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+                anchor.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const target = document.querySelector(this.getAttribute('href'));
+                    if (!target) {
+                        console.log('Target not found:', this.getAttribute('href'));
+                        return;
+                    }
+
+                    const headerHeight = document.querySelector('.header').offsetHeight || 80;
+                    const targetPosition = target.getBoundingClientRect().top + window.scrollY - headerHeight - 20;
+
+                    window.scrollTo({
+                        top: targetPosition,
+                        behavior: 'smooth'
+                    });
+                });
+            });
         });
         
         // Emergency fallback - force load after 2 seconds no matter what
         setTimeout(() => {
-            console.log('Emergency fallback triggered - forcing dashboard to show');
             const loading = document.getElementById('loading');
             const content = document.getElementById('dashboard-content');
             if (loading && loading.style.display !== 'none') {
-                console.log('Loading screen still visible, forcing hide...');
                 loading.style.display = 'none';
                 if (content) content.style.display = 'block';
                 
                 // Try to initialize if not already done
                 if (!window.honeypot) {
-                    console.log('Creating emergency HoneypotMatrix instance...');
                     try {
                         window.honeypot = new HoneypotMatrix();
                     } catch (e) {
@@ -2497,7 +2613,6 @@
             const loading = document.getElementById('loading');
             const content = document.getElementById('dashboard-content');
             if (loading && loading.style.display !== 'none') {
-                console.log('Forcing loading screen to hide due to timeout...');
                 loading.style.display = 'none';
                 if (content) content.style.display = 'block';
             }
