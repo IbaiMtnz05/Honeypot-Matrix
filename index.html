@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Honeypot Matrix | ibaim.eus</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js"></script>
+</head>
+<body>
+
+
+    <!-- Scroll progress bar -->
+    <div class="scroll-progress" id="scroll-progress"></div>
+
+    <!-- Background -->
+    <div class="background">
+        <div class="matrix-rain" id="matrix-rain"></div>
+    </div>
+
+    <!-- Responsive Header -->
+    <header class="header" id="header">
+        <nav class="nav">
+            <div class="logo nav-glitch">HONEYPOT MATRIX</div>
+            <div class="menu-toggle" id="menu-toggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+            <div class="nav-links" id="nav-links">
+                <a href="#overview">Overview</a>
+                <a href="#analytics">Analytics</a>
+                <a href="#terminal">Live Feed</a>
+                <a href="#attacks">Attacks</a>
+                <div class="status-indicator" id="status-indicator">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span id="status-text">Checking...</span>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Header removed per user request -->
+
+    <!-- Hero Section -->
+    <div class="hero">
+        <div class="hero-content">
+            <h1 class="hero-title glitch">HONEYPOT MATRIX</h1>
+            <p class="hero-subtitle">Real-time Cybersecurity Threat Intelligence</p>
+            <p class="hero-description">
+                Welcome to the digital battlefield. This honeypot system monitors and analyzes 
+                cyber attacks in real-time, providing insights into global threat patterns 
+                and malicious activities targeting our infrastructure.
+            </p>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading" id="loading">
+        <div class="loading-spinner"></div>
+        <span>INITIALIZING MATRIX...</span>
+    </div>
+
+    <!-- Main Content -->
+    <div id="dashboard-content" style="display: none;">
+        <!-- Stats Grid -->
+        <div class="stats-grid" id="overview">
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon"><i class="fas fa-crosshairs"></i></div>
+                </div>
+                <div class="stat-number" id="total-attacks">0</div>
+                <div class="stat-label">Total Attacks</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon"><i class="fas fa-globe"></i></div>
+                </div>
+                <div class="stat-number" id="unique-ips">0</div>
+                <div class="stat-label">Unique IPs</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon"><i class="fas fa-server"></i></div>
+                </div>
+                <div class="stat-number" id="services-count">0</div>
+                <div class="stat-label">Services Targeted</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon"><i class="fas fa-flag"></i></div>
+                </div>
+                <div class="stat-number" id="countries-count">0</div>
+                <div class="stat-label">Countries</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Live Attack Map -->
+            <div class="map-container" id="attack-map">
+                <div class="map-header">
+                    <div class="map-title">
+                        <i class="fas fa-globe-europe"></i> 
+                        Live Global Attack Map
+                        <span style="font-size: 0.7em; opacity: 0.8; margin-left: 8px;">(Real-time with a bit of delay)</span>
+                        <span id="map-pending-counter" class="feed-status" style="background: rgba(255,0,128,0.2); border-color: rgba(255,0,128,0.3); margin-left: 12px; font-size: 0.75em;">
+                            Queue: 0
+                        </span>
+                    </div>
+                    <div class="map-controls">
+                        <button class="map-btn" data-zoom="in" title="Zoom In (+)">+</button>
+                        <button class="map-btn" data-zoom="out" title="Zoom Out (-)">-</button>
+                        <button class="map-btn" data-reset title="Reset View">Reset</button>
+                    </div>
+                </div>
+                <div class="map-viewport" id="map-viewport">
+                    <div class="map-inner" id="map-inner">
+                        <!-- world.svg will be injected here dynamically -->
+                        <svg id="attack-map-overlay"></svg>
+                    </div>
+                </div>
+                <div class="map-legend" id="map-legend"></div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid" id="analytics">
+                <div class="chart-container">
+                    <div class="chart-title">
+                        <i class="fas fa-flag"></i>
+                        Top Attacking Countries
+                    </div>
+                    <canvas id="countryChart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <div class="chart-title">
+                        <i class="fas fa-bullseye"></i>
+                        Services Under Attack
+                    </div>
+                    <canvas id="serviceChart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <div class="chart-title">
+                        <i class="fas fa-chart-line"></i>
+                        Attack Timeline <span id="timezone-indicator" style="font-size: 0.8em; opacity: 0.7;"></span>
+                    </div>
+                    <canvas id="timeChart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <div class="chart-title">
+                        <i class="fas fa-user-ninja"></i>
+                        Top Threat Actors
+                    </div>
+                    <canvas id="attackerChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Terminal -->
+            <div class="terminal" id="terminal">
+                <div class="terminal-header">
+                    <div class="terminal-title">
+                        <i class="fas fa-terminal"></i>
+                        LIVE ATTACK FEED
+                        <span id="feed-status" class="feed-status">connecting...</span>
+                    </div>
+                    <div class="terminal-buttons">
+                        <div class="terminal-button"></div>
+                        <div class="terminal-button"></div>
+                        <div class="terminal-button"></div>
+                    </div>
+                </div>
+                <div class="terminal-content" id="terminal-content">
+                    <div class="terminal-line">[SYSTEM] Honeypot Matrix initialized...</div>
+                    <div class="terminal-line">[INFO] Monitoring active on all ports...</div>
+                    <div class="terminal-line">[STATUS] Waiting for threats...<span class="terminal-cursor"></span></div>
+                </div>
+            </div>
+
+            <!-- Recent Attacks Table -->
+            <div class="attacks-table" id="attacks">
+                <div class="section-title">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    RECENT ATTACK VECTORS
+                </div>
+                
+                <!-- Desktop Table View -->
+                <table>
+                    <thead>
+                        <tr>
+                            <th><i class="fas fa-clock"></i> Timestamp</th>
+                            <th><i class="fas fa-map-marker-alt"></i> Source IP</th>
+                            <th><i class="fas fa-cog"></i> Service</th>
+                            <th><i class="fas fa-plug"></i> Port</th>
+                            <th><i class="fas fa-flag"></i> Country</th>
+                            <th><i class="fas fa-city"></i> City</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attacks-tbody">
+                    </tbody>
+                </table>
+                
+                <!-- Mobile Cards View -->
+                <div class="attacks-cards" id="attacks-cards">
+                    <!-- Cards will be generated by JavaScript -->
+                </div>
+            </div>
+
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+</body>
+</html>
