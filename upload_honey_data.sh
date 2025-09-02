@@ -1,14 +1,15 @@
 #!/bin/bash
 # Honeypot data processor and uploader - Continuous execution version
+# Live demo available at: ibaim.eus/honey
 
 # Configuration - MODIFY THESE
-REMOTE_USER="your_username"
-REMOTE_HOST="your-webserver.com"
-REMOTE_PATH="/path/to/your/web/data/"
+REMOTE_USER="your-user"
+REMOTE_HOST="your-server.com"
+REMOTE_PATH="/path/to/your/web/files"
 LOG_FILE="/var/log/honeypot_upload.log"
 PROCESS_INTERVAL=15
 PYTHON_SCRIPT="/opt/honeypot/process_dionaea.py"
-OUTPUT_DIR="/tmp/honeypot_data"
+OUTPUT_DIR="/root/honeypot_data"
 
 # Ensure required directories exist
 sudo mkdir -p /var/log
@@ -57,6 +58,26 @@ upload_data() {
         log_message "Upload failed with exit code $exit_code"
         return 1
     fi
+}
+
+# Function to create and upload a timestamped backup of summary.json
+backup_summary() {
+    local now_year=$(date +%Y)
+    local now_month=$(date +%m)
+    local now_day=$(date +%d)
+    local now_hour=$(date +%H)
+    local now_minute=$(date +%M)
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_dir="$OUTPUT_DIR/backups/$now_year/$now_month/$now_day"
+    local backup_file="$backup_dir/summary_${timestamp}.json"
+    local remote_backup_dir="~/www/honey/backups/$now_year/$now_month/$now_day"
+
+    mkdir -p "$backup_dir"
+    cp "$OUTPUT_DIR/summary.json" "$backup_file"
+
+    # Upload backup to your server
+    rsync -avz --progress --timeout=60 "$backup_file" "$REMOTE_USER@$REMOTE_HOST:$remote_backup_dir/"
+    log_message "Backup created and uploaded: $backup_file -> $REMOTE_HOST:$remote_backup_dir/"
 }
 
 # Function to check if processes are running

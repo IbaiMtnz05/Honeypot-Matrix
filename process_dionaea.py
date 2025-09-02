@@ -2,6 +2,7 @@
 """
 Dionaea Log Processor - Improved Version with Incremental Updates
 Processes dionaea logs and creates web-ready data files
+Live demo available at: ibaim.eus/honey
 """
 
 import json
@@ -25,13 +26,15 @@ class DionaeaLogProcessor:
                  log_path='/opt/dionaea/var/log/dionaea/dionaea.log',
                  output_dir='/tmp/honeypot_data',
                  verbose=False,
-                 incremental=True):
+                 incremental=True,
+                 binaries_dir='/opt/dionaea/var/lib/dionaea/binaries'):
         
         self.log_path = log_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.verbose = verbose
         self.incremental = incremental
+        self.binaries_dir = Path(binaries_dir)
         self.processed_log_path = self.output_dir / 'processed_dionaea.log'
         
         # Persistent attack database to survive log rotations
@@ -91,6 +94,300 @@ class DionaeaLogProcessor:
             '631': 'printer', '69': 'tftp'
         }
         return port_map.get(str(port), f'port-{port}')
+
+    def analyze_binaries(self):
+        """Analyze collected malware binaries from both folder and log entries"""
+        binary_stats = {
+            'total_binaries': 0,
+            'binary_sizes': {},
+            'recent_samples': [],  # Changed from recent_binaries to match web interface
+            'size_distribution': {
+                '1kb': 0,      # < 1KB
+                '1_10kb': 0,   # 1-10KB  
+                '10_100kb': 0, # 10-100KB
+                '100kb_1mb': 0, # 100KB-1MB
+                '1mb': 0       # > 1MB
+            },
+            'file_types': {},
+            'download_events': [],  # Events from logs
+            'upload_events': []     # Events from logs
+        }
+        
+        # Part 1: Analyze physical binary files in directory
+        binary_files_from_folder = self.analyze_binary_folder()
+        
+        # Part 2: Extract binary-related events from logs  
+        binary_events_from_logs = self.extract_binary_events_from_logs()
+        
+        # Combine results from both sources
+        all_binaries = binary_files_from_folder + binary_events_from_logs
+        
+        # Process combined data
+        if all_binaries:
+            # Sort by timestamp (newest first)
+            all_binaries.sort(key=lambda x: x.get('timestamp', x.get('modified', '')), reverse=True)
+            
+            binary_stats['total_binaries'] = len(all_binaries)
+            binary_stats['recent_samples'] = all_binaries[:10]  # Last 10 samples
+            
+            # Calculate statistics
+            sizes = [b['size'] for b in all_binaries if 'size' in b and b['size'] > 0]
+            if sizes:
+                binary_stats['binary_sizes'] = {
+                    'min': min(sizes),
+                    'max': max(sizes),
+                    'avg': sum(sizes) // len(sizes),
+                    'total': sum(sizes)
+                }
+            
+            # Aggregate file types and size distribution
+            for binary in all_binaries:
+                # File type counting
+                file_type = binary.get('file_type', binary.get('type', 'unknown'))
+                binary_stats['file_types'][file_type] = binary_stats['file_types'].get(file_type, 0) + 1
+                
+                # Size distribution
+                size = binary.get('size', 0)
+                if size < 1024:  # < 1KB
+                    binary_stats['size_distribution']['1kb'] += 1
+                elif size < 10 * 1024:  # 1-10KB
+                    binary_stats['size_distribution']['1_10kb'] += 1
+                elif size < 100 * 1024:  # 10-100KB
+                    binary_stats['size_distribution']['10_100kb'] += 1
+                elif size < 1024 * 1024:  # 100KB-1MB
+                    binary_stats['size_distribution']['100kb_1mb'] += 1
+                else:  # > 1MB
+                    binary_stats['size_distribution']['1mb'] += 1
+        
+        if self.verbose:
+            print(f"Analyzed {len(binary_files_from_folder)} files from folder and {len(binary_events_from_logs)} events from logs")
+            print(f"Total unique binaries: {binary_stats['total_binaries']}")
+                
+        return binary_stats
+
+    def analyze_binary_folder(self):
+        """Analyze physical binary files in the binaries directory"""
+        binary_files = []
+        
+        if not self.binaries_dir.exists():
+            if self.verbose:
+                print(f"Binaries directory not found: {self.binaries_dir}")
+            return binary_files
+        
+        try:
+            for file_path in self.binaries_dir.iterdir():
+                if file_path.is_file():
+                    try:
+                        stat = file_path.stat()
+                        binary_info = {
+                            'filename': file_path.name,
+                            'size': stat.st_size,
+                            'timestamp': datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                            'hash': file_path.name if len(file_path.name) == 32 else 'unknown',
+                            'source': 'folder'
+                        }
+                        
+                        # Try to detect file type by reading first few bytes
+                        try:
+                            with open(file_path, 'rb') as f:
+                                header = f.read(16)
+                                file_type = self.detect_file_type(header)
+                                binary_info['file_type'] = file_type
+                        except:
+                            binary_info['file_type'] = 'unknown'
+                        
+                        binary_files.append(binary_info)
+                        
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error analyzing binary {file_path.name}: {e}")
+                        continue
+            
+            if self.verbose:
+                print(f"Found {len(binary_files)} files in binaries directory")
+                
+        except Exception as e:
+            if self.verbose:
+                print(f"Error scanning binaries directory: {e}")
+        
+        return binary_files
+
+    def extract_binary_events_from_logs(self):
+        """Extract binary download/upload events from Dionaea logs"""
+        binary_events = []
+        
+        if not os.path.exists(self.log_path):
+            if self.verbose:
+                print(f"Log file not found for binary extraction: {self.log_path}")
+            return binary_events
+        
+        try:
+            with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    # Look for binary-related patterns in logs
+                    patterns = [
+                        # Download events
+                        r'\[(\d{2})(\d{2})(\d{4}) (\d{2}:\d{2}:\d{2})\].*download.*(?:url|URL).*?(\d+)\s*bytes.*?(?:file|filename).*?([a-fA-F0-9]{32}|\w+\.\w+)',
+                        r'\[(\d{2})(\d{2})(\d{4}) (\d{2}:\d{2}:\d{2})\].*download.*complete.*?(\d+)\s*bytes.*?([a-fA-F0-9]{32}|\w+\.\w+)',
+                        r'\[(\d{2})(\d{2})(\d{4}) (\d{2}:\d{2}:\d{2})\].*file.*received.*?(\d+)\s*bytes.*?([a-fA-F0-9]{32}|\w+\.\w+)',
+                        # Upload events  
+                        r'\[(\d{2})(\d{2})(\d{4}) (\d{2}:\d{2}:\d{2})\].*upload.*?(\d+)\s*bytes.*?([a-fA-F0-9]{32}|\w+\.\w+)',
+                        r'\[(\d{2})(\d{2})(\d{4}) (\d{2}:\d{2}:\d{2})\].*file.*sent.*?(\d+)\s*bytes.*?([a-fA-F0-9]{32}|\w+\.\w+)',
+                    ]
+                    
+                    for pattern in patterns:
+                        match = re.search(pattern, line, re.IGNORECASE)
+                        if match:
+                            try:
+                                # Parse timestamp (DDMMYYYY format)
+                                day, month, year, time_str = match.group(1), match.group(2), match.group(3), match.group(4)
+                                size = int(match.group(5))
+                                filename = match.group(6)
+                                
+                                # Create datetime object
+                                dt = datetime.datetime(
+                                    int(year), int(month), int(day),
+                                    int(time_str[0:2]), int(time_str[3:5]), int(time_str[6:8])
+                                )
+                                
+                                # Determine event type
+                                event_type = 'download' if 'download' in line.lower() or 'received' in line.lower() else 'upload'
+                                
+                                # Guess file type from filename or content
+                                file_type = self.guess_file_type_from_name(filename)
+                                
+                                binary_event = {
+                                    'filename': filename,
+                                    'size': size,
+                                    'timestamp': dt.isoformat(),
+                                    'file_type': file_type,
+                                    'event_type': event_type,
+                                    'source': 'log'
+                                }
+                                
+                                binary_events.append(binary_event)
+                                break
+                                
+                            except Exception as e:
+                                if self.verbose:
+                                    print(f"Error parsing binary event from line: {line.strip()}")
+                                    print(f"Error: {e}")
+                                continue
+            
+            if self.verbose and binary_events:
+                print(f"Extracted {len(binary_events)} binary events from logs")
+                                
+        except Exception as e:
+            if self.verbose:
+                print(f"Error reading log for binary events: {e}")
+        
+        return binary_events
+
+    def guess_file_type_from_name(self, filename):
+        """Guess file type from filename extension"""
+        if not filename or '.' not in filename:
+            return 'unknown'
+        
+        ext = filename.lower().split('.')[-1]
+        
+        # Executable files
+        if ext in ['exe', 'dll', 'scr', 'com', 'bat', 'cmd', 'pif']:
+            return 'Windows_executable'
+        elif ext in ['sh', 'bin', 'run']:
+            return 'Linux_executable'
+        
+        # Archives
+        elif ext in ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz']:
+            return f'{ext.upper()}_archive'
+        
+        # Scripts
+        elif ext in ['py', 'pl', 'php', 'js', 'vbs', 'ps1']:
+            return f'{ext.upper()}_script'
+        
+        # Documents
+        elif ext in ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']:
+            return f'{ext.upper()}_document'
+        
+        # Images
+        elif ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff']:
+            return f'{ext.upper()}_image'
+        
+        else:
+            return f'{ext.upper()}_file'
+
+    def detect_file_type(self, header):
+        """Detect file type from binary header"""
+        if len(header) < 2:
+            return 'unknown'
+        # PE executable (Windows)
+        if header[:2] == b'MZ':
+            return 'PE_executable'
+        # ELF executable (Linux)
+        elif header[:4] == b'\x7fELF':
+            return 'ELF_executable'
+        # ZIP archive (includes JAR, APK, DOCX, etc.)
+        elif header[:2] == b'PK':
+            return 'ZIP_archive'
+        # GZIP compressed
+        elif header[:2] == b'\x1f\x8b':
+            return 'GZIP_archive'
+        # RAR archive
+        elif header[:4] == b'Rar!':
+            return 'RAR_archive'
+        # 7-Zip archive
+        elif header[:6] == b'7z\xbc\xaf\x27\x1c':
+            return '7ZIP_archive'
+        # PDF document
+        elif header[:4] == b'%PDF':
+            return 'PDF_document'
+        # JPEG image
+        elif header[:2] == b'\xff\xd8':
+            return 'JPEG_image'
+        # PNG image
+        elif header[:8] == b'\x89PNG\r\n\x1a\n':
+            return 'PNG_image'
+        # GIF image
+        elif header[:3] == b'GIF':
+            return 'GIF_image'
+        # BMP image
+        elif header[:2] == b'BM':
+            return 'BMP_image'
+        # Microsoft Office documents
+        elif header[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+            return 'MS_Office_document'
+        # RTF document
+        elif header[:5] == b'{\\rtf':
+            return 'RTF_document'
+        # Windows batch file
+        elif header[:2] == b'@e' or header[:3] == b'rem' or header[:4] == b'echo':
+            return 'Batch_script'
+        # Shell script
+        elif header[:2] == b'#!' or header[:8] == b'#!/bin/s':
+            return 'Shell_script'
+        # Python script
+        elif header[:7] == b'#!/usr/' and b'python' in header[:20]:
+            return 'Python_script'
+        # Perl script
+        elif header[:7] == b'#!/usr/' and b'perl' in header[:20]:
+            return 'Perl_script'
+        # HTML/XML
+        elif header[:5].lower() == b'<html' or header[:4] == b'<xml' or header[:5] == b'<?xml':
+            return 'HTML_XML_document'
+        # JavaScript
+        elif b'function' in header[:50] or b'var ' in header[:50] or b'let ' in header[:50]:
+            return 'JavaScript_file'
+        # Text-based files with suspicious content
+        elif any(keyword in header.lower() for keyword in [b'password', b'exploit', b'payload', b'shell', b'backdoor']):
+            return 'Suspicious_text'
+        # Generic text file
+        elif all(b > 31 or b in [9, 10, 13] for b in header[:50] if header):  # Printable ASCII + common whitespace
+            return 'Text_file'
+        # Script files (text-based)
+        elif header[0] in [0x20, 0x09] or (0x20 <= header[0] <= 0x7E):
+            return 'script_text'
+        # Unknown binary
+        else:
+            return 'unknown_binary'
 
     def load_persistent_attacks(self):
         """Load persistent attack database that survives log rotations"""
@@ -153,7 +450,8 @@ class DionaeaLogProcessor:
             'attacks': [],
             'summary': {},
             'hourly_stats': {},
-            'daily_stats': {}
+            'daily_stats': {},
+            'binary_stats': {}
         }
         
         try:
@@ -169,7 +467,7 @@ class DionaeaLogProcessor:
                         existing_data['attacks'] = json.load(f)
                     
             # Load existing stats
-            for stat_type in ['summary', 'hourly_stats', 'daily_stats']:
+            for stat_type in ['summary', 'hourly_stats', 'daily_stats', 'binary_stats']:
                 stat_file = self.output_dir / f'{stat_type}.json'
                 if stat_file.exists():
                     with open(stat_file, 'r') as f:
@@ -247,12 +545,12 @@ class DionaeaLogProcessor:
             
             # Only truncate if file is larger than 5MB or has more than 50000 lines
             if file_stats.st_size > 5000000:  # 5MB
-                with open(self.log_path, 'r') as f:
+                with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
                     lines = f.readlines()
                     
                 if len(lines) > 50000:
                     # Keep last 50000 lines
-                    with open(self.log_path, 'w') as f:
+                    with open(self.log_path, 'w', encoding='utf-8') as f:
                         f.writelines(lines[-50000:])
                         
                     # Reset processed position since we truncated the file
@@ -340,7 +638,7 @@ class DionaeaLogProcessor:
                     print(f"Error loading processed hashes: {e}")
         
         try:
-            with open(self.log_path, 'r') as f:
+            with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 # Get file size
                 f.seek(0, 2)  # Seek to end
                 file_size = f.tell()
@@ -449,46 +747,6 @@ class DionaeaLogProcessor:
             
         return new_attacks
 
-    def create_sample_data(self):
-        """Create sample data for testing"""
-        sample_attacks = []
-        base_time = datetime.datetime.now() - datetime.timedelta(hours=2)
-        
-        sample_ips = [
-            ('45.142.212.33', 'Russia', 'Moscow', 55.7558, 37.6176),
-            ('103.99.0.122', 'China', 'Shanghai', 31.2304, 121.4737), 
-            ('185.220.101.76', 'Germany', 'Frankfurt', 50.1109, 8.6821),
-            ('198.51.100.42', 'USA', 'New York', 40.7128, -74.0060),
-            ('192.0.2.146', 'France', 'Paris', 48.8566, 2.3522)
-        ]
-        
-        services = ['ssh', 'http', 'ftp', 'telnet', 'smb', 'mysql']
-        ports = {'ssh': 22, 'http': 80, 'ftp': 21, 'telnet': 23, 'smb': 445, 'mysql': 3306}
-        
-        for i in range(20):  # Create fewer samples for testing
-            ip, country, city, lat, lon = sample_ips[i % len(sample_ips)]
-            service = services[i % len(services)]
-            port = ports[service]
-            
-            timestamp = base_time + datetime.timedelta(minutes=i*2)
-            
-            attack = {
-                'timestamp': timestamp.isoformat(),
-                'src_ip': ip,
-                'src_port': str(1000 + i),
-                'dst_port': str(port),
-                'service': service,
-                'country': country,
-                'city': city,
-                'lat': lat,
-                'lon': lon
-            }
-            sample_attacks.append(attack)
-            
-        if self.verbose:
-            print("Created sample attacks for testing")
-        return sample_attacks
-
     def process_logs(self):
         """Process all available dionaea logs with incremental updates"""
         if self.verbose:
@@ -496,7 +754,7 @@ class DionaeaLogProcessor:
         
         # Load existing data for incremental updates BEFORE clearing logs
         existing_data = self.load_existing_data() if self.incremental else {
-            'attacks': [], 'summary': {}, 'hourly_stats': {}, 'daily_stats': {}
+            'attacks': [], 'summary': {}, 'hourly_stats': {}, 'daily_stats': {}, 'binary_stats': {}
         }
         
         if self.verbose and existing_data['attacks']:
@@ -523,13 +781,6 @@ class DionaeaLogProcessor:
         # Clear old log data AFTER processing to maintain incremental tracking
         self.clear_old_log_data()
         
-        if not truly_new_attacks and not existing_data['attacks']:
-            # Only create sample data if no existing data and no new attacks
-            if self.verbose:
-                print("No existing data or new attacks found, creating sample data...")
-            truly_new_attacks = self.create_sample_data()
-            existing_data = {'attacks': [], 'summary': {}, 'hourly_stats': {}, 'daily_stats': {}}
-        
         # Combine existing and truly new attacks
         all_attacks = existing_data['attacks'] + truly_new_attacks
         
@@ -541,6 +792,9 @@ class DionaeaLogProcessor:
         
         if self.verbose:
             print(f"Total attacks after adding new ones: {len(attacks)}")
+        
+        # Analyze collected binaries
+        binary_stats = self.analyze_binaries()
         
         # Generate statistics from all attacks
         ip_stats = Counter()
@@ -571,6 +825,10 @@ class DionaeaLogProcessor:
             'unique_ips': len(ip_stats),
             'unique_countries': len(country_stats),
             'services_count': len(service_stats),
+            'total_binaries': binary_stats['total_binaries'],
+            'unique_file_types': len(binary_stats['file_types']),
+            'malware_downloads': len([b for b in binary_stats.get('recent_samples', []) if b.get('event_type') == 'download' or b.get('source') == 'folder']),
+            'total_malware_size': binary_stats.get('binary_sizes', {}).get('total', 0),
             'top_attackers': dict(ip_stats.most_common(15)),
             'services_targeted': dict(service_stats.most_common()),
             'countries': dict(country_stats.most_common()),
@@ -584,6 +842,7 @@ class DionaeaLogProcessor:
         self.save_json_file('summary.json', summary)
         self.save_json_file('hourly_stats.json', dict(hourly_stats))
         self.save_json_file('daily_stats.json', dict(daily_stats))
+        self.save_json_file('binary_stats.json', binary_stats)
         
         if self.verbose:
             print(f"\nProcessing Summary:")
@@ -592,6 +851,7 @@ class DionaeaLogProcessor:
             print(f"Unique attacking IPs: {len(ip_stats)}")
             print(f"Countries: {len(country_stats)}")
             print(f"Services targeted: {len(service_stats)}")
+            print(f"Malware binaries collected: {binary_stats['total_binaries']}")
             print(f"Data saved to: {self.output_dir}")
         
         return summary
@@ -613,6 +873,7 @@ def main():
     parser = argparse.ArgumentParser(description='Process Dionaea logs')
     parser.add_argument('--log-path', default='/opt/dionaea/var/log/dionaea/dionaea.log', help='Path to dionaea.log')
     parser.add_argument('--output-dir', default='/tmp/honeypot_data', help='Output directory for JSON files')
+    parser.add_argument('--binaries-dir', default='/opt/dionaea/var/lib/dionaea/binaries', help='Path to binaries directory')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     parser.add_argument('--upload-user', help='Remote username for upload')
     parser.add_argument('--upload-host', help='Remote hostname for upload')
@@ -625,7 +886,8 @@ def main():
         log_path=args.log_path,
         output_dir=args.output_dir,
         verbose=args.verbose,
-        incremental=not args.no_incremental
+        incremental=not args.no_incremental,
+        binaries_dir=args.binaries_dir
     )
     
     summary = processor.process_logs()

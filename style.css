@@ -249,6 +249,7 @@
 
         /* Disabled states removed - no more glow effects */
         #attack-map .world-map path.has-attacked { fill: #c71585 !important; }
+        #attack-map .world-map path.new-attacker { fill: #ff69b4 !important; }
         #attack-map .world-map path.attacking { 
             fill: #8b0000 !important; 
             animation: none !important;
