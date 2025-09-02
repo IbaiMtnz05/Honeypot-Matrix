@@ -249,10 +249,31 @@
 
         /* Disabled states removed - no more glow effects */
         #attack-map .world-map path.has-attacked { fill: #c71585 !important; }
-        #attack-map .world-map path.new-attacker { fill: #ff69b4 !important; }
         #attack-map .world-map path.attacking { 
             fill: #8b0000 !important; 
             animation: none !important;
+        }
+
+        /* Real-time country glow effect when newly attacked */
+        #attack-map .world-map path.country-glow {
+            fill: #ff1493 !important;
+            filter: drop-shadow(0 0 8px #ff1493) drop-shadow(0 0 16px #ff1493);
+            animation: country-pulse 2s ease-out;
+        }
+
+        @keyframes country-pulse {
+            0% { 
+                filter: drop-shadow(0 0 12px #ff1493) drop-shadow(0 0 24px #ff1493);
+                transform: scale(1.02);
+            }
+            50% { 
+                filter: drop-shadow(0 0 16px #ff1493) drop-shadow(0 0 32px #ff1493);
+                transform: scale(1.05);
+            }
+            100% { 
+                filter: drop-shadow(0 0 8px #ff1493) drop-shadow(0 0 16px #ff1493);
+                transform: scale(1);
+            }
         }
         #attack-map .map-viewport { 
             background: radial-gradient(circle at center, rgba(0,40,80,0.3) 0%, rgba(0,0,0,0.8) 100%);

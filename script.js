@@ -89,8 +89,6 @@
                 this.lastDataUpdateTime = null; // Track when we last received data
                 this.statusCheckInterval = null;
                 this.currentStatValues = {}; // Track current animated values to prevent unnecessary animations
-                this.attackingCountries = new Set(); // Track countries that have attacked
-                this.newAttackingCountries = new Set(); // Track new attacking countries in current session
                 this.init();
             }
 
@@ -231,14 +229,10 @@
                     return;
                 }
 
-                // Initialize the attacking countries set with existing countries
-                this.attackingCountries.clear();
-                
                 // Color all countries that appear in the summary data
                 Object.keys(this.data.summary.countries).forEach(countryName => {
                     const attackCount = this.data.summary.countries[countryName];
                     if (attackCount > 0) {
-                        this.attackingCountries.add(countryName);
                         this.setCountryAsAttacked(countryName);
                     }
                 });
@@ -399,10 +393,14 @@
                 }
             }
 
-            setCountryAsNewAttacker(countryName) {
+            setCountryAsAttackedWithGlow(countryName) {
                 if (!this._worldSvg || !countryName) return;
                 
-                // Use the same country mapping logic as setCountryAsAttacked
+                // First set the country as attacked
+                this.setCountryAsAttacked(countryName);
+                
+                // Add glow effect to the newly attacked country
+                const possibleNames = [countryName];
                 const countryMappings = {
                     'United States': ['US', 'USA', 'United States of America'],
                     'Russia': ['RU', 'Russian Federation'],
@@ -417,10 +415,12 @@
                     'Australia': ['AU'],
                     'South Korea': ['KR', 'Korea'],
                     'Netherlands': ['NL', 'Holland'],
+                    'The Netherlands': ['NL', 'Holland', 'Netherlands'],
                     'Spain': ['ES', 'España'],
                     'Italy': ['IT', 'Italia'],
                     'Poland': ['PL', 'Polska'],
                     'Turkey': ['TR', 'Türkiye'],
+                    'Türkiye': ['TR', 'Turkey'],
                     'Ukraine': ['UA'],
                     'Vietnam': ['VN', 'Viet Nam'],
                     'Thailand': ['TH'],
@@ -432,38 +432,64 @@
                     'Iran': ['IR'],
                     'Israel': ['IL'],
                     'Saudi Arabia': ['SA'],
-                    'Pakistan': ['PK']
+                    'Pakistan': ['PK'],
+                    'Bangladesh': ['BD'],
+                    'Nigeria': ['NG'],
+                    'Kenya': ['KE'],
+                    'Morocco': ['MA'],
+                    'Algeria': ['DZ'],
+                    'Sweden': ['SE', 'Sverige'],
+                    'Norway': ['NO', 'Norge'],
+                    'Finland': ['FI', 'Suomi'],
+                    'Denmark': ['DK', 'Danmark'],
+                    'Belgium': ['BE', 'België'],
+                    'Switzerland': ['CH', 'Schweiz'],
+                    'Austria': ['AT', 'Österreich'],
+                    'Czech Republic': ['CZ', 'Czechia'],
+                    'Romania': ['RO', 'România'],
+                    'Bulgaria': ['BG', 'България'],
+                    'Greece': ['GR', 'Hellas'],
+                    'Portugal': ['PT'],
+                    'Ireland': ['IE', 'Éire'],
+                    'Hungary': ['HU', 'Magyarország'],
+                    'Slovakia': ['SK', 'Slovensko'],
+                    'Slovenia': ['SI', 'Slovenija']
                 };
-
-                // Get possible country names to search for
-                const possibleNames = [countryName];
+                
                 if (countryMappings[countryName]) {
                     possibleNames.push(...countryMappings[countryName]);
                 }
                 
-                // Add common name variations
-                possibleNames.push(
-                    countryName.toLowerCase(),
-                    countryName.toUpperCase(),
-                    countryName.replace(/\s+/g, ''),
-                    countryName.replace(/\s+/g, '_')
-                );
-                
-                let allPaths = [];
-                
-                // Try to find paths for any possible country name
+                // Find all paths for this country
+                const allPaths = [];
                 for (const name of possibleNames) {
-                    const paths = this._worldSvg.querySelectorAll(`path[data-name*="${name}" i], path[id*="${name}" i], path[class*="${name}" i]`);
-                    if (paths.length > 0) {
+                    const selectors = [
+                        `path[id*="${name}"]`,
+                        `path[class*="${name}"]`,
+                        `path[data-name="${name}"]`,
+                        `path[data-country="${name}"]`,
+                        `path[title="${name}"]`,
+                        `path[name="${name}"]`,
+                        `g[id*="${name}"] path`,
+                        `g[class*="${name}"] path`
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const paths = this._worldSvg.querySelectorAll(selector);
                         allPaths.push(...paths);
                     }
                 }
                 
-                // Mark all found paths with pink color for new attackers
+                // Add glow effect to newly attacked country
                 if (allPaths.length > 0) {
                     allPaths.forEach(path => {
-                        path.classList.add('has-attacked'); // Keep base attacked class
-                        path.classList.add('new-attacker'); // Add pink styling class
+                        // Add a temporary glow class
+                        path.classList.add('country-glow');
+                        
+                        // Remove glow after 2 seconds
+                        setTimeout(() => {
+                            path.classList.remove('country-glow');
+                        }, 2000);
                     });
                 }
             }
@@ -861,17 +887,11 @@
             addMapAttack(attack) {
                 if (!this._mapLoaded || !attack) return;
                 
+                console.log('Processing attack from:', attack.src_ip, attack.country, 'service:', attack.service);
+                
                 const key = `${attack.timestamp||''}|${attack.src_ip}`;
                 if (this._drawnAttackKeys.has(key)) return;
                 this._drawnAttackKeys.add(key);
-                
-                // Check if this is a new attacking country
-                const isNewCountry = attack.country && !this.attackingCountries.has(attack.country);
-                
-                if (isNewCountry) {
-                    this.attackingCountries.add(attack.country);
-                    this.newAttackingCountries.add(attack.country);
-                }
                 
                 // Get attack color based on service  
                 const color = this.serviceColor(attack.service);
@@ -881,16 +901,12 @@
                     this.lightUpCountry(attack.country, color);
                 }
                 
-                // Auto-reset after 5 seconds, but apply pink for new countries
+                console.log('Country', attack.country, 'lit up with color:', color);
+                
+                // Auto-reset after 5 seconds
                 setTimeout(() => {
                     if (attack.country) {
-                        if (isNewCountry) {
-                            // Apply pink color for new attacking countries
-                            this.setCountryAsNewAttacker(attack.country);
-                        } else {
-                            // Reset to normal attacked color for existing countries
-                            this.setCountryAsAttacked(attack.country);
-                        }
+                        this.resetCountryColor(attack.country);
                     }
                     this._drawnAttackKeys.delete(key);
                 }, 5000);
@@ -899,22 +915,17 @@
             addMapAttackWithAnimation(attack) {
                 if (!this._mapLoaded || !attack) return;
                 
+                console.log('Adding animated attack from:', attack.src_ip, attack.country, 'service:', attack.service);
+                
                 // Get attack coordinates from the attack data itself
                 const attackLat = attack.lat;
                 const attackLon = attack.lon;
                 
                 if (!attackLat || !attackLon) {
+                    console.log('No coordinates found for attack, skipping animation');
                     // Fall back to basic country highlighting
                     this.addMapAttack(attack);
                     return;
-                }
-
-                // Check if this is a new attacking country
-                const isNewCountry = attack.country && !this.attackingCountries.has(attack.country);
-                
-                if (isNewCountry) {
-                    this.attackingCountries.add(attack.country);
-                    this.newAttackingCountries.add(attack.country);
                 }
                 
                 // Convert coordinates to SVG coordinates
@@ -986,28 +997,17 @@
                 this._linesGroup.appendChild(attackGroup);
                 
                 // Animate the attack
-                this.animateStraightAttack(line, dot, arrow, startX, startY, endX, endY, color);
+                this.animateStraightAttack(line, dot, arrow, startX, startY, endX, endY, color, attack);
                 
-                // Check if this is a new attacking country
-                const isNewCountry = attack.country && this.newAttackingCountries.has(attack.country);
-                
-                // Remove after animation completes and apply permanent coloring
+                // Remove after animation completes
                 setTimeout(() => {
                     if (attackGroup.parentNode) {
                         attackGroup.parentNode.removeChild(attackGroup);
                     }
-                    
-                    // Apply pink color for new attacking countries after animation
-                    if (isNewCountry && attack.country) {
-                        this.setCountryAsNewAttacker(attack.country);
-                    } else if (attack.country) {
-                        // Apply normal attacked color for existing countries
-                        this.setCountryAsAttacked(attack.country);
-                    }
                 }, 4000);
             }
 
-            animateStraightAttack(line, dot, arrow, startX, startY, endX, endY, color) {
+            animateStraightAttack(line, dot, arrow, startX, startY, endX, endY, color, attack) {
                 const distance = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
                 const duration = 2000; // 2 seconds for clean animation
                 const startTime = performance.now();
@@ -1044,6 +1044,13 @@
                     } else {
                         // Animation complete - add simple impact effect
                         this.addSimpleImpactEffect(endX, endY, color);
+                        
+                        // Color the attacking country in real-time after animation with glow effect
+                        if (attack && attack.country) {
+                            setTimeout(() => {
+                                this.setCountryAsAttackedWithGlow(attack.country);
+                            }, 100); // Small delay after impact effect
+                        }
                         
                         // Keep visible briefly before fading
                         setTimeout(() => {
