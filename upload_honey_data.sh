@@ -1,11 +1,10 @@
 #!/bin/bash
 # Honeypot data processor and uploader - Continuous execution version
-# Live demo available at: ibaim.eus/honey
 
 # Configuration - MODIFY THESE
-REMOTE_USER="your-user"
-REMOTE_HOST="your-server.com"
-REMOTE_PATH="/path/to/your/web/files"
+REMOTE_USER="ibaim"
+REMOTE_HOST="ibaim.eus"
+REMOTE_PATH="/home/ibaim/www/honey/data"
 LOG_FILE="/var/log/honeypot_upload.log"
 PROCESS_INTERVAL=15
 PYTHON_SCRIPT="/opt/honeypot/process_dionaea.py"
@@ -33,6 +32,19 @@ process_logs() {
     
     if [ $exit_code -eq 0 ]; then
         log_message "Log processing successful"
+        
+        # Wait a moment for file system to sync
+        sleep 2
+        
+        # Verify critical files exist before declaring success
+        for file in "attacks.json" "summary.json" "hourly_stats.json" "daily_stats.json"; do
+            if [ ! -f "$OUTPUT_DIR/$file" ]; then
+                log_message "ERROR: Expected file $file was not created"
+                return 1
+            fi
+        done
+        
+        log_message "All expected output files verified"
         return 0
     else
         log_message "Log processing failed with exit code $exit_code"
@@ -44,8 +56,27 @@ process_logs() {
 upload_data() {
     log_message "Uploading data to $REMOTE_HOST..."
     
-    # Use rsync for efficient incremental uploads
-    rsync -avz --progress --timeout=60 \
+    # Check if output directory exists and has files
+    if [ ! -d "$OUTPUT_DIR" ]; then
+        log_message "ERROR: Output directory $OUTPUT_DIR does not exist"
+        return 1
+    fi
+    
+    # Check if there are JSON files to upload
+    json_count=$(find "$OUTPUT_DIR" -name "*.json" | wc -l)
+    if [ "$json_count" -eq 0 ]; then
+        log_message "WARNING: No JSON files found in $OUTPUT_DIR"
+    else
+        log_message "Found $json_count JSON files to upload"
+    fi
+    
+    # List files before upload for debugging
+    log_message "Files in output directory before upload:"
+    ls -la "$OUTPUT_DIR" | tee -a "$LOG_FILE"
+    
+    # Use rsync for efficient incremental uploads with better error handling
+    rsync -avz --progress --timeout=60 --checksum \
+        --exclude="processed_*" --exclude="*.log" \
         "$OUTPUT_DIR/" \
         "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH" 2>&1 | tee -a "$LOG_FILE"
     
@@ -58,26 +89,6 @@ upload_data() {
         log_message "Upload failed with exit code $exit_code"
         return 1
     fi
-}
-
-# Function to create and upload a timestamped backup of summary.json
-backup_summary() {
-    local now_year=$(date +%Y)
-    local now_month=$(date +%m)
-    local now_day=$(date +%d)
-    local now_hour=$(date +%H)
-    local now_minute=$(date +%M)
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_dir="$OUTPUT_DIR/backups/$now_year/$now_month/$now_day"
-    local backup_file="$backup_dir/summary_${timestamp}.json"
-    local remote_backup_dir="~/www/honey/backups/$now_year/$now_month/$now_day"
-
-    mkdir -p "$backup_dir"
-    cp "$OUTPUT_DIR/summary.json" "$backup_file"
-
-    # Upload backup to your server
-    rsync -avz --progress --timeout=60 "$backup_file" "$REMOTE_USER@$REMOTE_HOST:$remote_backup_dir/"
-    log_message "Backup created and uploaded: $backup_file -> $REMOTE_HOST:$remote_backup_dir/"
 }
 
 # Function to check if processes are running
